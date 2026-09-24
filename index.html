@@ -86,6 +86,9 @@ button{cursor:pointer}
 .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--ink-2)}
 .btn.ghost:hover{background:var(--surface-2)}
+/* limpar */
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.danger:disabled{opacity:.5;cursor:not-allowed}
 .btn.small{padding:5px 10px;font-size:13px}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 
@@ -304,7 +307,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/fireba
 import { getAuth, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, OAuthProvider,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail,
   updateProfile, signOut, reload } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, updateDoc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, limit }
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, writeBatch, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
 const DEC={aprovada:'Aprovada',recusada:'Recusada',contra:'Contraproposta',info:'Pedir mais informações'};
@@ -351,6 +354,8 @@ const cur=x=>x&&x.resposta&&(x.resposta.versao||1)>=(x.versao||1)?x.resposta:nul
 function status(x){if(!x) return 'aguardando';const r=cur(x);if(!r) return 'aguardando';
   if(r.dec==='contra'&&x.aceite&&x.aceite.versao===x.versao) return 'aceita';return r.dec;}
 function list(onlyMine){return Object.entries(S.L).filter(([,x])=>!onlyMine||x.uid===S.uid).map(([id,x])=>({id,x,st:status(x)}));}
+function minhas(){return list(true).filter(i=>!i.x.oculta);}
+const domingoSP=()=>new Date(Date.now()-3*36e5).getUTCDay()===0;
 function nextNum(){let m=0;for(const i of list(true)) m=Math.max(m,i.x.n||0);return m+1;}
 const vend=x=>x.vendedorNome||x.vendedorEmail||'Vendedor';
 const isRep=x=>!String(x.vendedorEmail||'').toLowerCase().endsWith('@'+CONFIG.dominio);
@@ -360,7 +365,7 @@ const meuNome=()=>(S.user&&(S.user.displayName||S.user.email))||'Você';
 /* ---------- writes ---------- */
 const blankItem=()=>({produto:'',qtd:'',valor:''});
 const itemEmpty=it=>!String(it.produto||'').trim()&&!String(it.qtd||'').trim()&&!String(it.valor||'').trim();
-function blankForm(){return {nome:recall('nome')||(S.user&&S.user.displayName)||'',cliente:'',doc:'',supervisor:recall('sup')||'',itens:[blankItem()],desc:'',obs:''};}
+function blankForm(){return {nome:recall('nome')||(S.user&&S.user.displayName)||'',cliente:'',cod:'',doc:'',supervisor:recall('sup')||'',itens:[blankItem()],desc:'',obs:''};}
 function validate(f){const e={};
   if(!f.nome.trim()) e.nome='Informe o seu nome.';
   if(!f.cliente.trim()) e.cliente='Informe o cliente.';
@@ -374,7 +379,7 @@ function validate(f){const e={};
   const ds=f.desc===''?0:parseNum(f.desc); if(ds==null||ds<0||ds>100) e.desc='Desconto entre 0 e 100%.';
   if(S.cfg.supervisores.length&&!f.supervisor) e.supervisor='Escolha seu supervisor.';
   return e;}
-function formBody(f){return {vendedorNome:f.nome.trim(),cliente:f.cliente.trim(),doc:digits(f.doc),supervisor:f.supervisor||'',
+function formBody(f){return {vendedorNome:f.nome.trim(),cliente:f.cliente.trim(),cod:String(f.cod||'').trim().slice(0,40),doc:digits(f.doc),supervisor:f.supervisor||'',
   itens:f.itens.filter(it=>!itemEmpty(it)).map(it=>({produto:it.produto.trim(),qtd:Math.round(parseNum(it.qtd)*1000)/1000,valor:Math.round(parseNum(it.valor)*100)/100})),
   desc:f.desc===''?0:parseNum(f.desc),obs:f.obs.trim()};}
 async function enviar(){
@@ -412,6 +417,26 @@ async function responder(){
   const anteriores=prev?[...(x.anteriores||[]),prev]:(x.anteriores||[]);
   const resposta={dec:rd.dec,com:rd.com.trim(),cvi,cd,por:S.uid,porNome:meuNome(),em:now,versao:x.versao||1};
   try{await updateDoc(doc(S.db,'propostas',id),{resposta,anteriores});S.rd=null;S.respEdit=false;toast('Retorno enviado para '+vend(x)+'.');}
+  catch(e){handleErr(e);}
+  S.busy=false; render();
+}
+async function limparMinhas(){
+  const alvo=minhas().filter(i=>i.st!=='aguardando'); if(!alvo.length||S.busy) return;
+  if(!confirm('Limpar '+alvo.length+(alvo.length===1?' proposta respondida':' propostas respondidas')+' da sua lista?\n\nAs que ainda aguardam retorno continuam aparecendo.')) return;
+  S.busy=true; render();
+  try{for(let k=0;k<alvo.length;k+=400){const b=writeBatch(S.db);alvo.slice(k,k+400).forEach(i=>b.update(doc(S.db,'propostas',i.id),{oculta:true}));await b.commit();}
+    if(alvo.some(i=>i.id===S.sel)) S.sel=null; toast('Sua lista foi limpa.');}
+  catch(e){handleErr(e);}
+  S.busy=false; render();
+}
+async function limparTodas(){
+  const ids=Object.keys(S.L); if(!ids.length||S.busy) return;
+  if(!domingoSP()){toast('A limpeza geral só pode ser feita no domingo.');return;}
+  const r=prompt('Isso EXCLUI DE VEZ '+ids.length+' propostas de todos os vendedores e representantes. Não dá para desfazer.\n\nSe já baixou a planilha e quer continuar, digite LIMPAR:');
+  if(r==null) return; if(r.trim().toUpperCase()!=='LIMPAR'){toast('Limpeza cancelada.');return;}
+  S.busy=true; render();
+  try{for(let k=0;k<ids.length;k+=400){const b=writeBatch(S.db);ids.slice(k,k+400).forEach(id=>b.delete(doc(S.db,'propostas',id)));await b.commit();}
+    S.sel='__hist'; toast('Propostas excluídas.');}
   catch(e){handleErr(e);}
   S.busy=false; render();
 }
@@ -507,17 +532,19 @@ function itemBtn(i,showVend){
 function renderSide(){
   const side=$('#side'); let h='';
   if(S.mode==='solicitar'){
-    const items=sortItems(list(true));
+    const items=sortItems(minhas()); const nLimp=items.filter(i=>i.st!=='aguardando').length;
     h+=`<div class="side-head"><h2>Minhas propostas</h2><button class="btn small primary" id="btnNova">+ Nova proposta</button></div><div class="plist">`;
     if(S.sel==='__nova') h+=`<button class="pitem" aria-current="true"><span class="pn">${S.editId?'Nova versão':'Nova proposta'}</span><span class="pill st-aguardando">Rascunho</span><span class="pd">Ainda não enviada</span></button>`;
     for(const i of items) h+=itemBtn(i,false);
     if(!items.length&&S.sel!=='__nova') h+=`<div class="empty-side">Você ainda não enviou propostas.</div>`;
     h+=`</div><div class="sidebox"><div class="lock"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex:none;margin-top:2px"><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" stroke-width="1.5"/></svg><span>Suas propostas e retornos só aparecem para você e para os aprovadores. Outros vendedores não veem nada.</span></div>
-      <label class="toggle"><input type="checkbox" id="som" ${S.som?'checked':''}> Som quando chegar retorno</label></div>`;
+      <label class="toggle"><input type="checkbox" id="som" ${S.som?'checked':''}> Som quando chegar retorno</label>
+      <button class="btn small danger" id="btnLimparMinhas" ${nLimp&&!S.busy?'':'disabled'}>Limpar minhas propostas${nLimp?' ('+nLimp+')':''}</button>
+      <span>Tira da sua lista as propostas já respondidas. As que aguardam retorno continuam.</span></div>`;
   }else{
     const all=list(false); const c={aguardando:0,respondidas:0,todas:all.length}; for(const i of all) i.st==='aguardando'?c.aguardando++:c.respondidas++;
     let items=all.filter(i=>S.filtro==='todas'||(S.filtro==='aguardando'?i.st==='aguardando':i.st!=='aguardando'));
-    if(S.q){const q=norm(S.q);items=items.filter(i=>norm(i.x.cliente+' '+vend(i.x)+' '+(i.x.vendedorEmail||'')+' '+itens(i.x).map(z=>z.produto).join(' ')+' '+(i.x.supervisor||'')+' '+i.x.doc).includes(q));}
+    if(S.q){const q=norm(S.q);items=items.filter(i=>norm(i.x.cliente+' '+vend(i.x)+' '+(i.x.vendedorEmail||'')+' '+itens(i.x).map(z=>z.produto).join(' ')+' '+(i.x.supervisor||'')+' '+i.x.doc+' '+(i.x.cod||'')).includes(q));}
     sortItems(items);
     h+=`<div class="side-head"><h2>Propostas recebidas</h2></div>
     <div class="toolbar"><div class="search"><svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6"/></svg><input id="q" type="search" placeholder="Cliente, vendedor, produto, CNPJ" value="${esc(S.q)}" autocomplete="off"></div></div>
@@ -541,7 +568,7 @@ function renderMain(){
     return renderDetail(m,id,true);
   }
   if(S.sel==='__nova') return renderForm(m);
-  const id=S.sel&&get(S.sel)&&get(S.sel).uid===S.uid?S.sel:null;
+  const id=S.sel&&get(S.sel)&&get(S.sel).uid===S.uid&&!get(S.sel).oculta?S.sel:null;
   if(!id){m.innerHTML=`<div class="card empty"><h3>Envie sua primeira proposta</h3><p>Informe o cliente e os itens, com a quantidade em kg e o preço por kg. A proposta vai direto para os aprovadores e o retorno aparece aqui.</p><p style="margin-top:14px"><button class="btn primary" id="btnNova2">+ Nova proposta</button></p></div>`;return;}
   renderDetail(m,id,false);
 }
@@ -578,6 +605,7 @@ function renderForm(m){
   h+=`<div class="sec"><div class="grid">
     ${fld('nome','Seu nome',f.nome,{ph:'Quem está enviando a proposta'})}
     ${fld('cliente','Cliente',f.cliente,{ph:'Razão social ou nome'})}
+    ${fld('cod','Código do cliente (opcional)',f.cod||'',{ph:'Código no sistema'})}
     ${fld('doc','CNPJ / CPF do cliente (opcional)',f.doc,{ph:'00.000.000/0000-00',im:'numeric',hint:esc(docHint(f.doc))})}
     ${sups.length?`<div class="field${S.formErr.supervisor?' bad':''}"><label for="f-supervisor">Seu supervisor</label><select id="f-supervisor" data-f="supervisor"><option value="">Escolha…</option>${sups.map(s=>`<option ${f.supervisor===s?'selected':''}>${esc(s)}</option>`).join('')}</select>${S.formErr.supervisor?`<span class="err">${esc(S.formErr.supervisor)}</span>`:''}</div>`:fld('supervisor','Seu supervisor',f.supervisor,{ph:'Nome do supervisor'})}
     ${fld('desc','Desconto pedido na proposta',f.desc,{ph:'0',im:'decimal',affix:true,post:'%',hint:'Deixe vazio se não houver'})}
@@ -600,7 +628,7 @@ function verdictBox(r,cls,x){
     <div class="vm num">${esc(r.porNome||'')} · ${fDT(r.em)}</div></div>`;
 }
 function summaryText(x){const r=cur(x),st=status(x),t=tot(x);const contra=r&&r.dec==='contra';
-  return [`Proposta ${x.n} — ${x.cliente}`,`Vendedor: ${vend(x)}${isRep(x)?' (representante)':''}${x.supervisor?' · Supervisor: '+x.supervisor:''}`,x.doc?`CNPJ/CPF: ${fmtDoc(x.doc)}`:'',
+  return [`Proposta ${x.n} — ${x.cliente}`,`Vendedor: ${vend(x)}${isRep(x)?' (representante)':''}${x.supervisor?' · Supervisor: '+x.supervisor:''}`,x.cod?`Código do cliente: ${x.cod}`:'',x.doc?`CNPJ/CPF: ${fmtDoc(x.doc)}`:'',
     ...itens(x).map((i,k)=>`• ${i.produto}: ${fmt(i.qtd)} kg × ${pkg(i.valor)} = ${brl(i.qtd*i.valor)}${contra&&r.cvi&&r.cvi[k]!=null?` → contra ${pkg(r.cvi[k])}`:''}`),
     `Total: ${fmt(t.kg)} kg · ${brl(t.rs)} (média ${pkg(t.med)})${x.desc?' · Desconto: '+fmt(x.desc)+'%':''}`,x.obs?`Obs.: ${x.obs}`:'',`Status: ${ST[st]}`,
     r?`Retorno: ${r.com||DEC[r.dec]}${contra?` · novo total ${brl(totContra(x,r))}${r.cd!=null?', desconto '+fmt(r.cd)+'%':''}`:''}`:''].filter(Boolean).join('\n');}
@@ -618,6 +646,7 @@ function renderDetail(m,id,adm){
     <div><dt>Total em kg</dt><dd class="big num">${fmt(t.kg)} kg<small>${nItens(t.n)}</small></dd></div>
     <div><dt>Preço médio</dt><dd class="big num">${pkg(t.med)}</dd></div>
     <div><dt>Desconto pedido</dt><dd>${x.desc?fmt(x.desc)+'%':'Sem desconto'}</dd></div>
+    <div><dt>Código do cliente</dt><dd class="mono">${x.cod?esc(x.cod):'Não informado'}</dd></div>
     <div><dt>CNPJ / CPF</dt><dd class="mono">${x.doc?esc(fmtDoc(x.doc)):'Não informado'}</dd></div>
     <div><dt>${adm?'Vendedor · supervisor':'Supervisor'}</dt><dd>${adm?esc(vend(x))+'<small>'+esc((x.vendedorEmail||'')+' · '+(x.supervisor||'supervisor não informado'))+'</small>':esc(x.supervisor||'Não informado')}</dd></div>
   </dl></div>
@@ -665,7 +694,9 @@ function renderHist(m){
   ${rows.map(r=>{const t=tot(r.x);return `<tr class="hrow" data-sel="${esc(r.id)}"><td><b>${esc(r.x.cliente)}</b><span class="sub2">Proposta ${r.x.n}${(r.x.versao||1)>1?' · v'+r.x.versao:''}</span></td><td>${esc(vend(r.x))}<span class="sub2">${esc(r.x.supervisor||'')}</span></td><td class="n">${t.n}</td><td class="n">${fmt(t.kg)}</td><td class="n">${brl(t.rs)}<span class="sub2">${pkg(t.med)}</span></td><td class="n">${r.x.desc?fmt(r.x.desc)+'%':'—'}</td><td class="num">${fDT(r.x.enviadaEm)}</td><td><span class="pill st-${r.st}">${esc(ST[r.st])}</span></td><td class="n">${r.t!=null?fDur(r.t):`<span style="color:var(--warn)">há ${fDur(now-new Date(r.x.enviadaEm))}</span>`}</td><td>${r.r?esc(r.r.porNome||''):'—'}</td></tr>`;}).join('')||'<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--ink-3)">Nenhuma proposta ainda.</td></tr>'}
   </tbody></table></div></section>
   <section class="card"><div class="phead" style="padding-bottom:4px"><div><div class="eyebrow">Configuração</div><h2 style="font-size:22px">Supervisores</h2></div></div>
-  <div class="sec" style="border-top:0;padding-top:4px"><div class="field"><label for="supTxt">Nomes que aparecem para o vendedor escolher, separados por vírgula</label><input id="supTxt" value="${esc(S.supTxt??S.cfg.supervisores.join(', '))}" placeholder="Ex.: Paulo Rizzato, Leonardo" autocomplete="off"></div><p style="margin:10px 0 0"><button class="btn small primary" id="btnSup">Salvar supervisores</button></p></div></section>`;
+  <div class="sec" style="border-top:0;padding-top:4px"><div class="field"><label for="supTxt">Nomes que aparecem para o vendedor escolher, separados por vírgula</label><input id="supTxt" value="${esc(S.supTxt??S.cfg.supervisores.join(', '))}" placeholder="Ex.: Paulo Rizzato, Leonardo" autocomplete="off"></div><p style="margin:10px 0 0"><button class="btn small primary" id="btnSup">Salvar supervisores</button></p></div></section>
+  <section class="card"><div class="phead" style="padding-bottom:4px"><div><div class="eyebrow">Só aos domingos</div><h2 style="font-size:22px">Limpeza semanal</h2></div></div>
+  <div class="sec" style="border-top:0;padding-top:4px"><p class="muted">Exclui de vez as propostas de todos os vendedores e representantes (${rows.length} hoje). Baixe a planilha antes, porque não dá para desfazer.</p><p style="margin:10px 0 0"><button class="btn small danger" id="btnLimparTodas" ${rows.length&&domingoSP()&&!S.busy?'':'disabled'}>Limpar propostas de todos</button> ${domingoSP()?'':'<span class="muted" style="margin-left:8px">Disponível só no domingo.</span>'}</p></div></section>`;
 }
 function convite(email){return `Olá! Seu acesso ao painel de propostas da Gtf está liberado.\n\n1. Abra ${location.origin+location.pathname}\n2. Clique em "Criar acesso" e use o e-mail ${email}\n3. Crie uma senha e confirme pelo link que chega no seu e-mail\n\nDepois é só entrar com esse e-mail e senha para enviar suas propostas.`;}
 function renderAcessos(m){
@@ -696,16 +727,16 @@ async function alternar(id){const a=(S.acessos||[]).find(z=>z.id===id);if(!a) re
 function exportCsv(){
   const q=v=>{const s=String(v??'');return /[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
   const d=v=>v==null?'':String(Math.round(v*1000)/1000).replace('.',',');
-  const lines=[['Proposta','Versão','Vendedor','E-mail','Supervisor','Cliente','CNPJ/CPF','Enviada','Status','Produto','Kg','Preço (R$/kg)','Total do item (R$)','Contraproposta (R$/kg)','Total da proposta (R$)','Desconto pedido (%)','Desconto liberado (%)','Retorno','Comentário','Respondido por','Tempo de retorno (h)']];
+  const lines=[['Proposta','Versão','Vendedor','E-mail','Supervisor','Cliente','Código do cliente','CNPJ/CPF','Enviada','Status','Produto','Kg','Preço (R$/kg)','Total do item (R$)','Contraproposta (R$/kg)','Total da proposta (R$)','Desconto pedido (%)','Desconto liberado (%)','Retorno','Comentário','Respondido por','Tempo de retorno (h)']];
   for(const r of histRows()){const t=tot(r.x);const contra=r.r&&r.r.dec==='contra';
-    itens(r.x).forEach((i,k)=>lines.push([r.x.n,r.x.versao||1,vend(r.x),r.x.vendedorEmail||'',r.x.supervisor||'',r.x.cliente,fmtDoc(r.x.doc),fDT(r.x.enviadaEm),ST[r.st],i.produto,d(i.qtd),d(i.valor),d(Math.round(i.qtd*i.valor*100)/100),contra&&r.r.cvi&&r.r.cvi[k]!=null?d(r.r.cvi[k]):'',d(Math.round(t.rs*100)/100),d(r.x.desc||0),r.r&&r.r.cd!=null?d(r.r.cd):'',r.r?fDT(r.r.em):'',r.r?r.r.com:'',r.r?r.r.porNome||'':'',r.t!=null?d(Math.round(r.t/36e5*100)/100):'']));}
+    itens(r.x).forEach((i,k)=>lines.push([r.x.n,r.x.versao||1,vend(r.x),r.x.vendedorEmail||'',r.x.supervisor||'',r.x.cliente,r.x.cod||'',fmtDoc(r.x.doc),fDT(r.x.enviadaEm),ST[r.st],i.produto,d(i.qtd),d(i.valor),d(Math.round(i.qtd*i.valor*100)/100),contra&&r.r.cvi&&r.r.cvi[k]!=null?d(r.r.cvi[k]):'',d(Math.round(t.rs*100)/100),d(r.x.desc||0),r.r&&r.r.cd!=null?d(r.r.cd):'',r.r?fDT(r.r.em):'',r.r?r.r.com:'',r.r?r.r.porNome||'':'',r.t!=null?d(Math.round(r.t/36e5*100)/100):'']));}
   const blob=new Blob(['﻿'+lines.map(l=>l.map(q).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Propostas.csv';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);
 }
 
 /* ---------- events ---------- */
 function openForm(editId){S.sel='__nova';S.editId=editId||null;S.formErr={};
-  if(editId){const x=get(editId);S.form={nome:x.vendedorNome||'',cliente:x.cliente,doc:fmtDoc(x.doc),supervisor:x.supervisor||'',itens:itens(x).map(i=>({produto:i.produto,qtd:dec2(i.qtd),valor:dec2(i.valor)})),desc:x.desc?dec2(x.desc):'',obs:x.obs||''};if(!S.form.itens.length) S.form.itens=[blankItem()];}
+  if(editId){const x=get(editId);S.form={nome:x.vendedorNome||'',cliente:x.cliente,cod:x.cod||'',doc:fmtDoc(x.doc),supervisor:x.supervisor||'',itens:itens(x).map(i=>({produto:i.produto,qtd:dec2(i.qtd),valor:dec2(i.valor)})),desc:x.desc?dec2(x.desc):'',obs:x.obs||''};if(!S.form.itens.length) S.form.itens=[blankItem()];}
   else S.form=blankForm(); render(true);}
 function addItem(){if(!S.form) return;S.form.itens.push(blankItem());render();const el=document.getElementById('it-'+(S.form.itens.length-1)+'-produto');if(el) el.focus();}
 document.addEventListener('keydown',ev=>{const el=ev.target;if(ev.key==='Enter'&&el.dataset&&el.dataset.ik==='valor'&&S.form&&+el.dataset.it===S.form.itens.length-1){ev.preventDefault();addItem();}});
@@ -739,6 +770,8 @@ document.addEventListener('click',async ev=>{
     case 'btnCancelResp': S.respEdit=false;S.rd=null;S.rdErr=null;render(); break;
     case 'btnCsv': exportCsv(); break;
     case 'btnSup': saveSup($('#supTxt').value); break;
+    case 'btnLimparMinhas': limparMinhas(); break;
+    case 'btnLimparTodas': limparTodas(); break;
     case 'btnCopy': {const txt=summaryText(get(S.sel));
       try{await navigator.clipboard.writeText(txt);toast('Resumo copiado.');}catch(e){S.copy=S.sel;render();const a=$('#copyArea');if(a){a.focus();a.select();}}
       break;}
