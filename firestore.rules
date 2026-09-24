@@ -5,13 +5,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ▼▼▼ E-MAILS DOS 4 APROVADORES — sempre em letras minúsculas ▼▼▼
+    // ▼▼▼ E-MAILS DOS APROVADORES — sempre em letras minúsculas ▼▼▼
     function aprovadores() {
       return [
         'paulo.neto@gtf.com.br',
-        'miguel@gtf.com.br',
-        'supervisor1@gtf.com.br',
-        'supervisor2@gtf.com.br'
+        'miguel.trindade@gtf.com.br',
+        'leonardo.goncalves@gtf.com.br',
+        'rafael.gomes@gtf.com.br',
+        'josimar.barros@gtf.com.br'
       ];
     }
     // ▲▲▲ Para trocar um aprovador, edite a lista acima e clique em Publicar ▲▲▲
