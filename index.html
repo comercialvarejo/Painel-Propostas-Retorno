@@ -641,10 +641,11 @@ function renderDetail(m,id,adm){
   if(S.copy===id) h+=`<div class="copybox"><div class="flabel" style="margin-bottom:6px">Selecione e copie o texto</div><textarea id="copyArea" readonly>${esc(summaryText(x))}</textarea></div>`;
   h+=timeline(x);
   const t=tot(x); const showC=c&&c.dec==='contra'&&!(adm&&S.respEdit);
+  const vRs=showC?totContra(x,c):t.rs; const vMed=t.kg?vRs/t.kg:0;
   h+=`<div class="sec"><dl class="data">
-    <div><dt>Total da proposta</dt><dd class="big num">${brl(t.rs)}</dd></div>
+    <div><dt>${showC?'Total da contraproposta':'Total da proposta'}</dt><dd class="big num">${brl(vRs)}${showC?'<small>Pedido: '+brl(t.rs)+'</small>':''}</dd></div>
     <div><dt>Total em kg</dt><dd class="big num">${fmt(t.kg)} kg<small>${nItens(t.n)}</small></dd></div>
-    <div><dt>Preço médio</dt><dd class="big num">${pkg(t.med)}</dd></div>
+    <div><dt>${showC?'Preço médio da contraproposta':'Preço médio'}</dt><dd class="big num">${pkg(vMed)}${showC?'<small>Pedido: '+pkg(t.med)+'</small>':''}</dd></div>
     <div><dt>Desconto pedido</dt><dd>${x.desc?fmt(x.desc)+'%':'Sem desconto'}</dd></div>
     <div><dt>Código do cliente</dt><dd class="mono">${x.cod?esc(x.cod):'Não informado'}</dd></div>
     <div><dt>CNPJ / CPF</dt><dd class="mono">${x.doc?esc(fmtDoc(x.doc)):'Não informado'}</dd></div>
